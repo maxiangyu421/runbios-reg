@@ -1,0 +1,20 @@
+name: runbios-reg
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "注册数量"
+        default: "1"
+jobs:
+  reg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python reg_action.py
+        env:
+          GIST_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
