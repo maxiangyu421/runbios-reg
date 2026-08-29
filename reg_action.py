@@ -173,7 +173,8 @@ def register_one():
     pwd = "Rb" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!7"
     ts_token = get_turnstile_token()
     if not ts_token:
-        print("[reg] ⚠️ 无 turnstile token")
+        print("[reg] 无 turnstile token, 跳过本次注册(省 tempmail 配额)")
+        return None
     px = PX()
     st, resp = px(BASE + "/api/auth/register", "POST",
                   {"email": box["address"], "password": pwd, "name": "nb_" + r8,
