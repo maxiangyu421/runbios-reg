@@ -17,13 +17,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install playwright + chrome
+      - name: Install browsers (patchright > playwright fallback)
         run: |
-          pip install playwright
-          python -m playwright install --with-deps chrome
+          pip install patchright playwright
+          python -m patchright install --with-deps chrome || true
+          python -m playwright install --with-deps chrome || true
       - name: Solve turnstile (test only)
         if: ${{ inputs.mode == 'solve_test' }}
         run: xvfb-run -a python ts_solve.py --solve-only
+      - name: Upload debug screenshots
+        if: ${{ inputs.mode == 'solve_test' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-debug
+          path: ts_debug*.png
+          if-no-files-found: ignore
+      - name: Upload debug screenshot
+        if: ${{ inputs.mode == 'solve_test' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts-debug
+          path: ts_debug.png
+          if-no-files-found: ignore
       - name: Register
         if: ${{ inputs.mode != 'solve_test' }}
         run: xvfb-run -a python reg_action.py

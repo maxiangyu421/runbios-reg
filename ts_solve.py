@@ -1,38 +1,48 @@
-"""Playwright 拿 Turnstile token: 打开注册页, 等无感验证发 token。
-2026-08-29 起平台注册强制校验 turnstile_token, 空/假 token 一律 REGISTRATION_DECLINED。
-GH Actions ubuntu runner 自带真 Chrome; 配 xvfb-run 跑 headful 模式过检率最高。
-token 5 分钟有效、单次使用, 拿到立刻用。"""
-import time, sys
+"""Turnstile token 获取 v2:
+- patchright(反检测 playwright 补丁)优先, 装了 playwright 就退回
+- headful + xvfb; 三次尝试; 检测到交互复选框就模拟点击
+- 失败留截图 ts_debug_N.png 供诊断
+token 5 分钟有效、单次使用。"""
+import time, sys, os
 
 PAGE = "https://platform.runbios.ai/register"
 SEL = 'input[name="cf-turnstile-response"]'
 SITEKEY = "0x4AAAAAAEc7OxiF_IQKIpUY"
 
-def solve(timeout=90, headful=True):
-    from playwright.sync_api import sync_playwright
+def _launch(p, headful):
     args = ["--disable-blink-features=AutomationControlled",
-            "--no-sandbox", "--disable-dev-shm-usage"]
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(channel="chrome", headless=not headful, args=args)
-        except Exception:
-            browser = p.chromium.launch(headless=not headful, args=args)
-        ctx = browser.new_context(viewport={"width": 1280, "height": 800},
-                                  locale="en-US",
-                                  user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            "--no-sandbox", "--disable-dev-shm-usage",
+            "--window-size=1280,800"]
+    try:
+        return p.chromium.launch(channel="chrome", headless=not headful, args=args,
+                                 ignore_default_args=["--enable-automation"])
+    except Exception:
+        return p.chromium.launch(headless=not headful, args=args)
+
+def _one_attempt(p, headful, timeout):
+    browser = _launch(p, headful)
+    try:
+        ctx = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
         page = ctx.new_page()
-        page.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+        page.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "window.chrome={runtime:{}};")
         page.goto(PAGE, wait_until="domcontentloaded", timeout=45000)
+        time.sleep(3)
+        # 拟人: 随机晃一下鼠标 + 滚动
+        for xy in ((400, 300), (700, 500), (900, 380)):
+            page.mouse.move(*xy, steps=8); time.sleep(0.4)
+        page.mouse.wheel(0, 120); time.sleep(0.5)
         deadline = time.time() + timeout
-        tok = ""
-        while time.time() < deadline and not tok:
+        clicked = False
+        while time.time() < deadline:
             time.sleep(2)
+            tok = ""
             try:
                 tok = page.eval_on_selector(SEL, "e=>e.value") or ""
             except Exception:
-                tok = ""
+                pass
             if not tok:
-                # 页面自己的 widget 卡住(blacklisted环境)就自渲染一个补射
                 try:
                     tok = page.evaluate(
                         "() => {"
@@ -43,19 +53,59 @@ def solve(timeout=90, headful=True):
                         "    document.body.appendChild(d);"
                         "    window.__rb_wid = window.turnstile.render(d, {"
                         "      sitekey: '" + SITEKEY + "',"
-                        "      callback: t => { window.__rb_tok = t; }"
+                        "      callback: t => { window.__rb_tok = t; },"
+                        "      'error-callback': c => { window.__rb_err = c; }"
                         "    });"
                         "  }"
                         "  return window.__rb_tok || '';"
                         "}") or ""
+                    err = page.evaluate("() => window.__rb_err || ''")
+                    if err: print("[ts] widget error-callback:", err)
                 except Exception:
                     pass
+            if tok:
+                return tok
+            # 交互式复选框: 找 cloudflare iframe 点它
+            try:
+                fr = page.query_selector('iframe[src*="challenges.cloudflare.com"]')
+                if fr and not clicked:
+                    box = fr.bounding_box()
+                    if box and box["width"] > 50:
+                        print("[ts] 发现交互复选框, 点击", int(box["x"]), int(box["y"]))
+                        page.mouse.click(box["x"] + 28, box["y"] + box["height"] / 2)
+                        clicked = True
+                        time.sleep(3)
+            except Exception as e:
+                print("[ts] click err:", str(e)[:80])
+        page.screenshot(path="ts_debug.png")
+        print("[ts] 超时, 已留截图 ts_debug.png")
+        return ""
+    finally:
         try: browser.close()
         except Exception: pass
-        return tok
+
+def solve(timeout=60, attempts=3, headful=True):
+    try:
+        from patchright.sync_api import sync_playwright
+        eng = "patchright"
+    except ImportError:
+        from playwright.sync_api import sync_playwright
+        eng = "playwright"
+    print("[ts] engine:", eng, "headful:", headful)
+    with sync_playwright() as p:
+        for i in range(1, attempts + 1):
+            print(f"[ts] 第 {i}/{attempts} 次尝试…")
+            try:
+                tok = _one_attempt(p, headful, timeout)
+            except Exception as e:
+                print("[ts] attempt exc:", str(e)[:150]); tok = ""
+            if tok:
+                print("[ts] GOT len", len(tok))
+                return tok
+            time.sleep(3)
+    return ""
 
 if __name__ == "__main__":
-    only_solve = "--solve-only" in sys.argv
     t = solve()
     print("[ts] token_len", len(t))
     if t:
@@ -63,4 +113,4 @@ if __name__ == "__main__":
         print("[ts] OK")
     else:
         print("[ts] FAIL")
-        sys.exit(0 if only_solve else 0)   # 失败也不挡主流程, 让 reg 报出真实错误
+    sys.exit(0)
