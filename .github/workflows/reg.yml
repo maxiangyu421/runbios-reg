@@ -29,7 +29,7 @@ jobs:
         if: ${{ inputs.mode == 'solve_test' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ts-debug
+          name: ts-debug-${{ github.run_id }}
           path: ts_debug*.png
           if-no-files-found: ignore
       - name: Upload debug screenshot
