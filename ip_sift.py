@@ -7,13 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
-BROWSER_N = int(os.environ.get("SIFT_COUNT", "10"))   # 交给阶段2浏览器实测的数量
+BROWSER_N = int(os.environ.get("SIFT_COUNT", "15"))   # 交给阶段2浏览器实测的数量
 GIST_FILE = "dead_pool.txt"                            # 只读; good_pool.txt 由阶段2写
 
 SOURCES = [
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=3000&country=all",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/protocols/socks5/data.txt",
+    
 ]
 
 def jreq(url, method="GET", data=None, hdrs=None, timeout=20):
@@ -61,8 +61,9 @@ def ip_quality(ip_list):
     keep, stats = [], {"dc": 0, "flagged": 0, "err": 0}
     for i in range(0, len(ip_list), 15):
         chunk = ip_list[i:i+15]
+        hosts = [p.split(":")[0] for p in chunk]   # ip-api 只认纯 IP, host:port 会整批无效
         st, d = jreq("http://ip-api.com/batch?fields=query,proxy,hosting,isp,country",
-                     "POST", chunk, timeout=15)
+                     "POST", hosts, timeout=15)
         if st != 200 or not isinstance(d, list):
             print(f"[api] batch {i//15} 失败 st={st}, 整批放行(交连通性测兜底)")
             keep += chunk; continue
