@@ -1,5 +1,7 @@
-"""SeleniumBase UC Mode + 住宅代理: OS 级点击对照实验。
-TS_PROXY 未设时从 proxies.txt 轮换(最多4个), 每个代理内: 静默打开 -> click_captcha -> 读 token。"""
+"""SeleniumBase UC Mode + 住宅代理轮换 (2026-08-29 实测成功路线)。
+成功签名: uc_gui_click_captcha OS 级点击 + Cox 家宽出口, 第二个代理即出 token(773字节)。
+patchright/CDP 点击在同类 IP 上被 CF 识破(对照实验), 勿换回去。
+成功后写 ts_token.txt + ts_proxy.txt(token 5分钟有效单次用, 注册必须走同一代理)。"""
 import sys, time, os, random
 
 PAGE = "https://platform.runbios.ai/register"
@@ -25,38 +27,44 @@ def try_one(px):
         sb.uc_open_with_reconnect(PAGE, reconnect_time=6)
         time.sleep(10)
         tok = read_token(sb)
-        print("[uc] 初始 token_len", len(tok))
+        print("[uc] 初始 token_len", len(tok), flush=True)
         for attempt in range(1, 4):
             if tok: break
             for fn in ("uc_gui_click_captcha", "uc_gui_handle_captcha"):
                 try:
                     getattr(sb, fn)()
-                    print("[uc] attempt %d %s() OK" % (attempt, fn))
+                    print("[uc] attempt %d %s() OK" % (attempt, fn), flush=True)
                     break
                 except Exception as e:
-                    print("[uc] attempt %d %s() err: %s" % (attempt, fn, str(e)[:90]))
+                    print("[uc] attempt %d %s() err: %s" % (attempt, fn, str(e)[:90]), flush=True)
             time.sleep(8)
             tok = read_token(sb)
-            print("[uc] attempt %d token_len %d" % (attempt, len(tok)))
+            print("[uc] attempt %d token_len %d" % (attempt, len(tok)), flush=True)
         if tok:
             with open("ts_token.txt", "w") as f: f.write(tok)
-            print("[uc] OK via", px)
+            with open("ts_proxy.txt", "w") as f: f.write(px)
+            print("[uc] OK via", px, flush=True)
         else:
             try: sb.save_screenshot("uc_debug.png")
             except Exception: pass
         return tok
 
 if __name__ == "__main__":
-    px_list = ([os.environ["TS_PROXY"].split("://",1)[1]] if os.environ.get("TS_PROXY")
-               else random.sample(load_proxies(), min(3, len(load_proxies()))))
-    print("[uc] 代理队列:", px_list)
+    pl = load_proxies()
+    # 之前失败的代理和成功的都留池里, 随机抽 4 个(72.195.114.169 已验证可过, 排前面提高首轮成功率)
+    known_good = ["72.195.114.169:4145"]
+    rest = [p for p in pl if p not in known_good]
+    random.shuffle(rest)
+    px_list = [p for p in known_good if p in pl] + rest
+    px_list = px_list[:4]
+    print("[uc] 代理队列:", px_list, flush=True)
     got = ""
     for px in px_list:
-        print("[uc] === 代理", px, "===")
+        print("[uc] === 代理", px, "===", flush=True)
         try:
             got = try_one("socks5://" + px)
         except Exception as e:
-            print("[uc] exc:", str(e)[:120])
+            print("[uc] exc:", str(e)[:120], flush=True)
         if got: break
-    print("[uc] 最终:", "OK" if got else "FAIL")
+    print("[uc] 最终:", "OK" if got else "FAIL", flush=True)
     sys.exit(0)

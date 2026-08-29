@@ -11,7 +11,7 @@ on:
 jobs:
   reg:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       GIST_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
       GIST_ID: ${{ secrets.GIST_ID }}

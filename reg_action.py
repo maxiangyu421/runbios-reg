@@ -143,14 +143,27 @@ def gist_write(accounts):
 
 # ---------------- 注册主流程 ----------------
 def get_turnstile_token():
+    """UC 模式(子进程隔离, seleniumbase 全局态不污染本进程)解 token;
+    成功后读回 ts_proxy.txt 并 set_proxy, 保证注册 API 与解题同出口 IP。"""
+    import subprocess
+    for f in ("ts_token.txt", "ts_proxy.txt"):
+        if os.path.exists(f):
+            os.remove(f)
     try:
-        import ts_solve
-        tok = ts_solve.solve()
-        print("[ts] token_len", len(tok))
-        return tok
+        subprocess.run([sys.executable, "uc_ts.py"], timeout=560, check=False)
     except Exception as e:
-        print("[ts] solver 异常:", str(e)[:150])
-        return ""
+        print("[ts] uc 子进程异常:", str(e)[:120])
+    tok = px_used = ""
+    if os.path.exists("ts_token.txt"):
+        tok = open("ts_token.txt").read().strip()
+    if os.path.exists("ts_proxy.txt"):
+        px_used = open("ts_proxy.txt").read().strip()
+    if tok and px_used:
+        set_proxy("socks5://" + px_used)
+        print("[ts] token_len", len(tok), "via", PROXY)
+    else:
+        print("[ts] token_len 0")
+    return tok
 
 def register_one():
     box = tm_generate()
