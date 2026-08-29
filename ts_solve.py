@@ -19,6 +19,21 @@ def _launch(p, headful):
     except Exception:
         return p.chromium.launch(headless=not headful, args=args)
 
+def _cf_frame_states(page):
+    """钻进 cloudflare iframe 读状态文字(交叉诊断用)"""
+    out = []
+    try:
+        for fr in page.frames:
+            if "challenges.cloudflare.com" in (fr.url or ""):
+                try:
+                    txt = fr.evaluate("() => document.body ? document.body.innerText.slice(0,150) : ''")
+                except Exception as e:
+                    txt = "<eval err %s>" % str(e)[:40]
+                out.append((fr.url[:70], txt.replace("\n", " | ")))
+    except Exception:
+        pass
+    return out
+
 def _one_attempt(p, headful, timeout):
     browser = _launch(p, headful)
     try:
@@ -34,7 +49,8 @@ def _one_attempt(p, headful, timeout):
             page.mouse.move(*xy, steps=8); time.sleep(0.4)
         page.mouse.wheel(0, 120); time.sleep(0.5)
         deadline = time.time() + timeout
-        clicked = False
+        clicks = 0
+        last_click = 0.0
         while time.time() < deadline:
             time.sleep(2)
             tok = ""
@@ -65,18 +81,25 @@ def _one_attempt(p, headful, timeout):
                     pass
             if tok:
                 return tok
-            # 交互式复选框: 找 cloudflare iframe 点它
+            # 交互式复选框: 找 cloudflare iframe, 反复点(每次点击间隔 8s, 最多 5 次)
             try:
-                fr = page.query_selector('iframe[src*="challenges.cloudflare.com"]')
-                if fr and not clicked:
-                    box = fr.bounding_box()
-                    if box and box["width"] > 50:
-                        print("[ts] 发现交互复选框, 点击", int(box["x"]), int(box["y"]))
-                        page.mouse.click(box["x"] + 28, box["y"] + box["height"] / 2)
-                        clicked = True
-                        time.sleep(3)
+                if clicks < 5 and time.time() - last_click > 8:
+                    frs = page.query_selector_all('iframe[src*="challenges.cloudflare.com"]')
+                    for fr in frs:
+                        box = fr.bounding_box()
+                        if box and box["width"] > 50:
+                            if clicks == 0:
+                                print("[ts] 发现交互复选框 @", int(box["x"]), int(box["y"]))
+                            page.mouse.click(box["x"] + 28, box["y"] + box["height"] / 2)
+                            clicks += 1
+                            last_click = time.time()
+                            print(f"[ts] 第{clicks}次点击")
+                            time.sleep(2)
+                            break
             except Exception as e:
                 print("[ts] click err:", str(e)[:80])
+        for url, txt in _cf_frame_states(page):
+            print(f"[ts] frame {url} => {txt}")
         page.screenshot(path="ts_debug.png")
         print("[ts] 超时, 已留截图 ts_debug.png")
         return ""
