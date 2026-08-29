@@ -57,14 +57,19 @@ def try_one(px):
         return tok
 
 if __name__ == "__main__":
-    pl = load_proxies()
-    # 优先用上次成功的代理(Gist good_proxy.txt, workflow 已下载到本地): 实测坏代理一轮要烧 35s,
-    # 把最近一次能过盾的代理置顶可把解盾从 3~4 分钟压到 ~45s。读不到再退回随机。
-    good = [p for p in load_good() if p in pl]
-    rest = [p for p in pl if p not in good]
-    random.shuffle(rest)
-    px_list = good + rest
-    px_list = px_list[:4]
+    single = os.environ.get("SINGLE_PROXY", "")   # ip-sift 阶段2: 只测这一个
+    if single:
+        px_list = [single.replace("socks5://", "")]
+    else:
+        pl = load_proxies()
+        pl = load_proxies()
+        # 优先用上次成功的代理(Gist good_proxy.txt, workflow 已下载到本地): 实测坏代理一轮要烧 35s,
+        # 把最近一次能过盾的代理置顶可把解盾从 3~4 分钟压到 ~45s。读不到再退回随机。
+        good = [p for p in load_good() if p in pl]
+        rest = [p for p in pl if p not in good]
+        random.shuffle(rest)
+        px_list = good + rest
+        px_list = px_list[:4]
     print("[uc] 代理队列:", px_list, flush=True)
     got = ""
     for px in px_list:
