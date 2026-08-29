@@ -1,0 +1,27 @@
+name: uc-turnstile-test
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "solve_test=只测token | reg=完整注册"
+        default: "solve_test"
+jobs:
+  uc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install seleniumbase
+        run: pip install seleniumbase
+      - name: UC mode turnstile solve (test)
+        if: ${{ inputs.mode == 'solve_test' }}
+        run: xvfb-run -a python uc_ts.py
+      - name: UC mode full register
+        if: ${{ inputs.mode != 'solve_test' }}
+        run: xvfb-run -a python reg_action.py --use-uc
+        env:
+          GIST_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
