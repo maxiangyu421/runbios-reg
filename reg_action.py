@@ -13,26 +13,31 @@ GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
 
-# ---------------- 代理选择 ----------------
-def pick_proxy():
-    px = os.environ.get("TS_PROXY", "")
-    if px:
-        return px
+# ---------------- 代理选择(轮换) ----------------
+def load_proxies():
     try:
-        lines = [l.strip() for l in open("proxies.txt") if l.strip() and not l.startswith("#")]
-        if lines:
-            return "socks5://" + random.choice(lines)
+        return [l.strip() for l in open("proxies.txt") if l.strip() and not l.startswith("#")]
     except FileNotFoundError:
-        pass
-    return ""
+        return []
 
-PROXY = pick_proxy()          # 形如 socks5://ip:port
+PX_LIST = load_proxies()
+PROXY = os.environ.get("TS_PROXY") or ("socks5://" + random.choice(PX_LIST) if PX_LIST else "")
 PX_HOST = PX_PORT = None
 if PROXY:
     _hp = PROXY.split("://", 1)[1]
     PX_HOST, PX_PORT = _hp.split(":")
     PX_PORT = int(PX_PORT)
 os.environ["TS_PROXY"] = PROXY   # 传给 ts_solve(浏览器同出口)
+
+def set_proxy(px):
+    """轮换代理: 同步改 jreq_px 的出口与浏览器的 TS_PROXY(保证 token 与注册同 IP)。"""
+    global PROXY, PX_HOST, PX_PORT
+    PROXY = px
+    if px:
+        _hp = px.split("://", 1)[1]
+        PX_HOST, PX_PORT = _hp.split(":")
+        PX_PORT = int(PX_PORT)
+    os.environ["TS_PROXY"] = px
 
 # ---------------- 通用请求 ----------------
 def jreq(url, method="GET", data=None, hdrs=None, timeout=30):
@@ -49,6 +54,8 @@ def jreq(url, method="GET", data=None, hdrs=None, timeout=30):
 
 # ---------------- SOCKS5 隧道(仅 platform.runbios.ai 用) ----------------
 def socks5_connect(dst_host, dst_port, timeout=15):
+    if not PX_HOST:
+        raise RuntimeError("no proxy")
     dst_ip = socket.gethostbyname(dst_host)
     s = socket.create_connection((PX_HOST, PX_PORT), timeout=timeout)
     s.sendall(b"\x05\x01\x00")
@@ -185,12 +192,36 @@ def register_one():
             "balance": bal, "registered_at": int(time.time()), "active": True, "error": ""}
 
 if __name__ == "__main__":
-    print("[px] 本次代理:", PROXY or "(无, 直连)")
+    print("[px] 代理池:", len(PX_LIST), "个")
     if "--solve-only" in sys.argv:
-        tok = get_turnstile_token()
-        print("[ts] solve-only 结果:", "OK" if tok else "FAIL")
+        import ts_solve
+        ok = False
+        for px in PX_LIST[:4]:
+            set_proxy("socks5://" + px)
+            print("[px] 换代理 ->", PROXY)
+            try:
+                tok = ts_solve.solve()   # solve() 每次读 TS_PROXY, 无需 reload
+            except Exception as e:
+                print("[ts] solver 异常:", str(e)[:150]); tok = ""
+            except Exception as e:
+                print("[ts] solver 异常:", str(e)[:150]); tok = ""
+            print("[ts] token_len", len(tok))
+            if tok:
+                with open("ts_token.txt", "w") as f: f.write(tok)
+                print("[ts] OK via", PROXY)
+                ok = True
+                break
+        if not ok:
+            print("[ts] FAIL(全部代理)")
         sys.exit(0)
-    entry = register_one()
+    # 完整注册: 逐代理尝试(解题+注册同 IP)
+    entry = None
+    for px in PX_LIST[:4]:
+        set_proxy("socks5://" + px)
+        print("[px] 换代理 ->", PROXY)
+        entry = register_one()
+        if entry:
+            break
     if not entry:
         sys.exit(1)
     print(f"[reg] ✅ {entry['email']} bal={entry.get('balance')}")
