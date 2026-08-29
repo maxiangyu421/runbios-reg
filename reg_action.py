@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""GitHub Actions 里跑的注册脚本: 注册新号 -> base64 混淆后追加到 Gist accounts.json"""
+"""GitHub Actions 里跑的注册脚本: 注册新号 -> base64 混淆后追加到 Gist accounts.json
+2026-08-29: 平台把注册 Turnstile 从摆设升级为硬校验, 启动时先用 playwright 真 Chrome 拿 token。"""
 import json, os, re, sys, time, random, string, base64
 import urllib.request as U
 
@@ -57,15 +58,29 @@ def gist_write(accounts):
                  {"Authorization": "token " + GIST_TOKEN})
     print("[gist] write", st)
 
+def get_turnstile_token():
+    """playwright 真 Chrome 渲染注册页拿 token; 拿不到返回空(照样提交, 让上游报真实错误)。"""
+    try:
+        import ts_solve
+        tok = ts_solve.solve()
+        print("[ts] token_len", len(tok))
+        return tok
+    except Exception as e:
+        print("[ts] solver 异常:", str(e)[:150])
+        return ""
+
 def register_one():
     box = tm_generate()
     if not box:
         print("[reg] tempmail 不可用"); return None
     r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
     pwd = "Rb" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!7"
+    ts_token = get_turnstile_token()
+    if not ts_token:
+        print("[reg] ⚠️ 无 turnstile token, 平台大概率会拒")
     st, resp = jreq(BASE + "/api/auth/register", "POST",
                     {"email": box["address"], "password": pwd, "name": "nb_" + r8,
-                     "website": "", "turnstile_token": ""})
+                     "website": "", "turnstile_token": ts_token})
     if st != 201:
         print("[reg] 失败:", st, str(resp)[:120]); return None
     print("[reg] 已提交, 等OTP…")
@@ -87,13 +102,17 @@ def register_one():
     bal = None
     st, w = jreq(BASE + "/api/billing/wallet", hdrs={"Authorization": "Bearer " + acc})
     if st == 200:
-        try: bal = float(w.get("available_balance_dollars") or 0)
+        try: bal = float(w.get("balance_dollars") or w.get("available_balance_dollars") or 0)
         except Exception: pass
     return {"email": box["address"], "password": pwd, "access_token": acc,
             "refresh_token": tok.get("refresh_token"), "fp": fp, "workspace_id": wid,
             "balance": bal, "registered_at": int(time.time()), "active": True, "error": ""}
 
 if __name__ == "__main__":
+    if "--solve-only" in sys.argv:
+        tok = get_turnstile_token()
+        print("[ts] solve-only 结果:", "OK" if tok else "FAIL")
+        sys.exit(0)
     entry = register_one()
     if not entry:
         sys.exit(1)

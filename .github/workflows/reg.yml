@@ -5,6 +5,9 @@ on:
       count:
         description: "注册数量"
         default: "1"
+      mode:
+        description: "reg=完整注册 | solve_test=只测turnstile"
+        default: "reg"
 jobs:
   reg:
     runs-on: ubuntu-latest
@@ -14,7 +17,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python reg_action.py
+      - name: Install playwright + chrome
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chrome
+      - name: Solve turnstile (test only)
+        if: ${{ inputs.mode == 'solve_test' }}
+        run: xvfb-run -a python ts_solve.py --solve-only
+      - name: Register
+        if: ${{ inputs.mode != 'solve_test' }}
+        run: xvfb-run -a python reg_action.py
         env:
           GIST_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
