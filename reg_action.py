@@ -141,6 +141,17 @@ def gist_write(accounts):
                  {"Authorization": "token " + GIST_TOKEN})
     print("[gist] write", st)
 
+def gist_write_good_proxy(px):
+    """记录本次成功过盾的代理(裸 host:port), 下次 run 置顶首选 —— 省掉坏代理试错(每轮 ~30s)。"""
+    try:
+        host = px.split("://", 1)[1] if "://" in px else px
+        st, d = jreq(f"https://api.github.com/gists/{GIST_ID}", "PATCH",
+                     {"files": {"good_proxy.txt": {"content": host}}},
+                     {"Authorization": "token " + GIST_TOKEN})
+        print("[gist] good_proxy <-", host, st)
+    except Exception as e:
+        print("[gist] good_proxy 写入失败:", str(e)[:100])
+
 # ---------------- 注册主流程 ----------------
 def get_turnstile_token():
     """UC 模式(子进程隔离, seleniumbase 全局态不污染本进程)解 token;
@@ -241,6 +252,7 @@ if __name__ == "__main__":
     if not entry:
         sys.exit(1)
     print(f"[reg] ✅ {entry['email']} bal={entry.get('balance')}")
+    gist_write_good_proxy(PROXY)   # 本次真正过盾+注册成功的出口, 供下次置顶
     accounts = gist_read()
     if any(a.get("email") == entry["email"] for a in accounts):
         print("[gist] 已存在, 跳过")
