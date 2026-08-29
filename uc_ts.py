@@ -12,6 +12,12 @@ def load_proxies():
     except FileNotFoundError:
         return []
 
+def load_good():
+    try:
+        return [l.strip() for l in open("good_proxy.txt") if l.strip()]
+    except FileNotFoundError:
+        return []
+
 def read_token(sb):
     try:
         return sb.execute_script(
@@ -28,7 +34,8 @@ def try_one(px):
         time.sleep(10)
         tok = read_token(sb)
         print("[uc] 初始 token_len", len(tok), flush=True)
-        for attempt in range(1, 4):
+        # 坏代理试再多轮也解不出(实测), 2 轮就换: 每个死代理省 ~12s
+        for attempt in range(1, 3):
             if tok: break
             for fn in ("uc_gui_click_captcha", "uc_gui_handle_captcha"):
                 try:
@@ -51,11 +58,12 @@ def try_one(px):
 
 if __name__ == "__main__":
     pl = load_proxies()
-    # 之前失败的代理和成功的都留池里, 随机抽 4 个(72.195.114.169 已验证可过, 排前面提高首轮成功率)
-    known_good = ["72.195.114.169:4145"]
-    rest = [p for p in pl if p not in known_good]
+    # 优先用上次成功的代理(Gist good_proxy.txt, workflow 已下载到本地): 实测坏代理一轮要烧 35s,
+    # 把最近一次能过盾的代理置顶可把解盾从 3~4 分钟压到 ~45s。读不到再退回随机。
+    good = [p for p in load_good() if p in pl]
+    rest = [p for p in pl if p not in good]
     random.shuffle(rest)
-    px_list = [p for p in known_good if p in pl] + rest
+    px_list = good + rest
     px_list = px_list[:4]
     print("[uc] 代理队列:", px_list, flush=True)
     got = ""
