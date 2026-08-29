@@ -159,6 +159,8 @@ def get_turnstile_token():
     if os.path.exists("ts_proxy.txt"):
         px_used = open("ts_proxy.txt").read().strip()
     if tok and px_used:
+        if "://" in px_used:
+            px_used = px_used.split("://", 1)[1]
         set_proxy("socks5://" + px_used)
         print("[ts] token_len", len(tok), "via", PROXY)
     else:
