@@ -24,7 +24,7 @@ jobs:
           python -m playwright install --with-deps chrome || true
       - name: Solve turnstile (test only)
         if: ${{ inputs.mode == 'solve_test' }}
-        run: xvfb-run -a python ts_solve.py --solve-only
+        run: xvfb-run -a python reg_action.py --solve-only
       - name: Upload debug screenshots
         if: ${{ inputs.mode == 'solve_test' }}
         uses: actions/upload-artifact@v4
