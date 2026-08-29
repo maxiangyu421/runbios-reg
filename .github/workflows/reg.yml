@@ -20,11 +20,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install deps (UC solver + patchright fallback)
+          cache: pip            # 依赖基本不变, 命中缓存可省 ~40s
+      - name: Install deps (UC solver, reg 模式够用即可)
+        if: ${{ inputs.mode != 'solve_test' }}
+        run: pip install seleniumbase pyautogui
+      - name: Install deps (solve_test 才需要 patchright/playwright 全家桶)
+        if: ${{ inputs.mode == 'solve_test' }}
         run: |
           pip install seleniumbase pyautogui opencv-python-headless patchright playwright
           python -m patchright install --with-deps chrome || true
           python -m playwright install --with-deps chrome || true
+      - name: Fetch last-good proxy (上次过盾代理置顶, 省试错)
+        if: ${{ inputs.mode != 'solve_test' }}
+        run: |
+          python -c "
+          import json, os, urllib.request
+          req = urllib.request.Request('https://api.github.com/gists/' + os.environ['GIST_ID'],
+                                       headers={'Authorization': 'token ' + os.environ['GIST_TOKEN']})
+          g = json.load(urllib.request.urlopen(req, timeout=15))
+          f = (g.get('files') or {}).get('good_proxy.txt') or {}
+          c = (f.get('content') or '').strip()
+          open('good_proxy.txt', 'w').write(c)
+          print('last-good proxy:', c or '(none)')
+          "
       - name: Solve turnstile (test only)
         if: ${{ inputs.mode == 'solve_test' }}
         run: xvfb-run -a python reg_action.py --solve-only
