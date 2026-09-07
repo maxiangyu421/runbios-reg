@@ -18,6 +18,12 @@ def load_good():
     except FileNotFoundError:
         return []
 
+def load_hall():
+    try:
+        return [l.strip() for l in open("hall_of_fame.txt") if l.strip()]
+    except FileNotFoundError:
+        return []
+
 def read_token(sb):
     try:
         return sb.execute_script(
@@ -62,14 +68,18 @@ if __name__ == "__main__":
         px_list = [single.replace("socks5://", "")]
     else:
         pl = load_proxies()
+        # 置顶三层(09-07): ①hall_of_fame 历史过盾明星 → ②上次成功 good_proxy → ③其余洗牌。
+        # 随机抽样会稀释已验证的好 IP(实测一整轮明星 IP 都没被轮到), 改为确定性优先。
+        # 明星池随机起点轮换, 避免反复烧同一批顶头 IP 的 CF 信誉。
         pl = load_proxies()
-        # 优先用上次成功的代理(Gist good_proxy.txt, workflow 已下载到本地): 实测坏代理一轮要烧 35s,
-        # 把最近一次能过盾的代理置顶可把解盾从 3~4 分钟压到 ~45s。读不到再退回随机。
-        good = [p for p in load_good() if p in pl]
-        rest = [p for p in pl if p not in good]
+        hall = [p for p in load_hall() if p in pl]
+        good = [p for p in load_good() if p in pl and p not in hall]
+        rest = [p for p in pl if p not in hall and p not in good]
         random.shuffle(rest)
-        px_list = good + rest
-        px_list = px_list[:4]
+        if len(hall) > 4:
+            k = random.randrange(len(hall))
+            hall = hall[k:] + hall[:k]
+        px_list = (hall + good + rest)[:4]
     print("[uc] 代理队列:", px_list, flush=True)
     got = ""
     for px in px_list:
