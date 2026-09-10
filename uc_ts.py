@@ -18,9 +18,9 @@ def load_good():
     except FileNotFoundError:
         return []
 
-def load_hall():
+def load_goodpool():
     try:
-        return [l.strip() for l in open("hall_of_fame.txt") if l.strip()]
+        return [l.strip() for l in open("good_pool.txt") if l.strip()]
     except FileNotFoundError:
         return []
 
@@ -68,18 +68,14 @@ if __name__ == "__main__":
         px_list = [single.replace("socks5://", "")]
     else:
         pl = load_proxies()
-        # 置顶三层(09-07): ①hall_of_fame 历史过盾明星 → ②上次成功 good_proxy → ③其余洗牌。
-        # 随机抽样会稀释已验证的好 IP(实测一整轮明星 IP 都没被轮到), 改为确定性优先。
-        # 明星池随机起点轮换, 避免反复烧同一批顶头 IP 的 CF 信誉。
-        pl = load_proxies()
-        hall = [p for p in load_hall() if p in pl]
-        good = [p for p in load_good() if p in pl and p not in hall]
-        rest = [p for p in pl if p not in hall and p not in good]
+        # 置顶两层(09-10, 明星机制已删): ①上次成功 good_proxy(确定性第一) →
+        # ②good_pool 已验证池(洗牌, 不反复烧同一批 IP 的 CF 信誉) → ③其余洗牌。
+        gp = [p for p in load_good() if p in pl]
+        pool_ips = [p for p in load_goodpool() if p in pl and p not in gp]
+        random.shuffle(pool_ips)
+        rest = [p for p in pl if p not in gp and p not in set(pool_ips)]
         random.shuffle(rest)
-        if len(hall) > 4:
-            k = random.randrange(len(hall))
-            hall = hall[k:] + hall[:k]
-        px_list = (hall + good + rest)[:4]
+        px_list = (gp + pool_ips + rest)[:4]
     print("[uc] 代理队列:", px_list, flush=True)
     got = ""
     for px in px_list:
