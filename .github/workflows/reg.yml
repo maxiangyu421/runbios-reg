@@ -42,8 +42,7 @@ jobs:
           pool = ((files.get('good_pool.txt') or {}).get('content') or '').strip()
           last = ((files.get('good_proxy.txt') or {}).get('content') or '').strip()
           reserve = ((files.get('reserve_pool.txt') or {}).get('content') or '').strip()
-          hall = ((files.get('hall_of_fame.txt') or {}).get('content') or '').strip()
-          open('hall_of_fame.txt', 'w').write(hall)
+          open('good_pool.txt', 'w').write(pool)
           open('good_proxy.txt', 'w').write(last if last else ((pool.splitlines() or [''])[0] if pool else ''))
           base = [l.strip() for l in open('proxies.txt') if l.strip() and not l.startswith('#')]
           merged = list(dict.fromkeys([l for l in pool.splitlines() if l.strip()] + last.splitlines() + base + reserve.splitlines())) if (pool or last or reserve) else base
