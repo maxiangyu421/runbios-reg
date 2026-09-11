@@ -15,6 +15,9 @@ jobs:
     env:
       GIST_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
       GIST_ID: ${{ secrets.GIST_ID }}
+      RB_MAIL_URL: ${{ secrets.RB_MAIL_URL }}
+      RB_MAIL_SITE: ${{ secrets.RB_MAIL_SITE }}
+      RB_MAIL_ADMIN: ${{ secrets.RB_MAIL_ADMIN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

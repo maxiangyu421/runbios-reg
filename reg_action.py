@@ -12,6 +12,12 @@ import urllib.request as U
 BASE = "https://platform.runbios.ai"
 TM = "https://api.tempmail.lol"
 MTM = "https://api.mail.tm"
+# 2026-09-11: rb-mail = 自建 CF worker 邮箱(xinyu1.ggff.net 邮件路由 -> worker D1),
+# 域名不在临时邮箱黑名单。凭证走 repo secrets(公开仓库, 不能硬编码)。mail.tm/tempmail.lol 降为兜底。
+RB_URL = os.environ.get("RB_MAIL_URL", "").rstrip("/")
+RB_SITE = os.environ.get("RB_MAIL_SITE", "")
+RB_ADMIN = os.environ.get("RB_MAIL_ADMIN", "")
+RB_DOMAIN = "xinyu1.ggff.net"
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
@@ -127,7 +133,51 @@ def wait_otp(token, minutes=6):
             if mm: return mm.group(1)
     return None
 
-# ---------------- mail.tm(直连, 不走代理; 2026-09-11 新增主力) ----------------
+# ---------------- rb-mail(自建 CF 邮箱, 直连; 2026-09-11 主力) ----------------
+def rb_generate():
+    """worker admin API 建地址, 返回 jwt; 失败/未配置返回 None 走兜底。"""
+    if not (RB_URL and RB_SITE and RB_ADMIN):
+        print("[box] rb-mail secrets 未配置, 跳过"); return None
+    name = "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
+    st, d = jreq(RB_URL + "/admin/new_address", "POST",
+                 {"name": name, "domain": RB_DOMAIN, "enablePrefix": False},
+                 {"x-admin-auth": RB_ADMIN, "x-custom-auth": RB_SITE})
+    if not (d or {}).get("jwt"):
+        print("[box] rb-mail 建址失败", st, str(d)[:80]); return None
+    print("[box]", d["address"], "(rb-mail)")
+    return {"address": d["address"], "jwt": d["jwt"], "rb": True}
+
+def _mail_text(raw):
+    """RFC822 -> Subject + 正文文本(raw_mails 只有 raw 全文, 头部数字多, 必须解析后再找码)。"""
+    try:
+        from email import policy
+        import email as _em
+        msg = _em.message_from_string(raw, policy=policy.default)
+        parts = [str(msg.get("Subject") or "")]
+        body = msg.get_body(preferencelist=("plain", "html"))
+        if body is not None:
+            parts.append(body.get_content())
+        return " ".join(parts)
+    except Exception:
+        return raw
+
+def rb_wait_otp(jwt, minutes=6):
+    ah = {"Authorization": "Bearer " + jwt, "x-custom-auth": RB_SITE}
+    seen, n = set(), 0
+    deadline = time.time() + minutes * 60
+    while time.time() < deadline:
+        time.sleep(8)
+        st, d = jreq(RB_URL + "/api/mails?limit=20&offset=0", hdrs=ah)
+        for m in ((d or {}).get("results") or []):
+            if m.get("id") in seen: continue
+            seen.add(m.get("id"))
+            mm = re.search(r"\b(\d{6})\b", _mail_text(m.get("raw") or ""))
+            if mm: return mm.group(1)
+        n += 1
+        if n % 4 == 0: print("[box] 等 OTP", int(deadline - time.time()), "s…")
+    return None
+
+# ---------------- mail.tm(直连, 不走代理; 2026-09-11 降为兜底) ----------------
 def mtm_generate():
     """mail.tm: 建账号收信。域名池动态(当前 1 个), 直连。"""
     st, d = jreq(MTM + "/domains?page=1")
@@ -223,7 +273,7 @@ def register_one():
     if not ts_token:
         print("[reg] 无 turnstile token, 跳过本次注册(省邮箱配额)")
         return None
-    box = mtm_generate() or tm_generate()
+    box = rb_generate() or mtm_generate() or tm_generate()
     if not box:
         print("[reg] 邮箱源不可用"); return None
     r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
@@ -235,7 +285,8 @@ def register_one():
     if st != 201:
         print("[reg] 失败:", st, str(resp)[:150]); return None
     print("[reg] 已提交, 等OTP…")
-    otp = mtm_wait_otp(box["token"]) if box.get("mtm") else wait_otp(box["token"])
+    otp = (rb_wait_otp(box["jwt"]) if box.get("rb")
+           else mtm_wait_otp(box["token"]) if box.get("mtm") else wait_otp(box["token"]))
     if not otp:
         print("[reg] OTP 超时"); return None
     fp = "".join(random.choices("0123456789abcdef", k=64))
