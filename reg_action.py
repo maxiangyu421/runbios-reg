@@ -2,13 +2,16 @@
 """GitHub Actions 注册脚本 v2 (2026-08-29):
 平台注册强制 Turnstile 校验后, 注册流量改走住宅 SOCKS5 代理。
 安全边界(重要): 只有 platform.runbios.ai 的请求走代理(一次性账密/OTP, MITM 可接受);
-tempmail.lol 与 api.github.com 一律直连 —— GIST_TOKEN 等真实凭证绝不经过代理。
-代理从 proxies.txt 随机选一个, 注册与浏览器解 token 用同一个出口(token 可能绑 IP)。"""
+tempmail.lol / mail.tm 与 api.github.com 一律直连 —— GIST_TOKEN 等真实凭证绝不经过代理。
+代理从 proxies.txt 随机选一个, 注册与浏览器解 token 用同一个出口(token 可能绑 IP)。
+2026-09-11: 平台 09-10 起接临时邮箱黑名单(tempmail.lol 全系域名被封, 含 26ai.art),
+邮箱源改为 mail.tm 优先 + tempmail.lol 兜底; 邮箱生成挪到过盾之后(省配额)。"""
 import json, os, re, sys, time, random, string, base64, socket, struct, ssl
 import urllib.request as U
 
 BASE = "https://platform.runbios.ai"
 TM = "https://api.tempmail.lol"
+MTM = "https://api.mail.tm"
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
@@ -103,7 +106,7 @@ def jreq_px(url, method="POST", data=None, hdrs=None, timeout=30):
 def PX():
     return jreq_px if PROXY else jreq
 
-# ---------------- tempmail(直连, 不走代理) ----------------
+# ---------------- tempmail.lol(直连, 不走代理) ----------------
 def tm_generate():
     for i in range(5):
         st, d = jreq(TM + "/generate")
@@ -121,6 +124,42 @@ def wait_otp(token, minutes=6):
         st, d = jreq(f"{TM}/auth/{token}")
         for m in (d.get("email") or []):
             mm = re.search(r"\b(\d{6})\b", m.get("subject", "") + " " + (m.get("body") or ""))
+            if mm: return mm.group(1)
+    return None
+
+# ---------------- mail.tm(直连, 不走代理; 2026-09-11 新增主力) ----------------
+def mtm_generate():
+    """mail.tm: 建账号收信。域名池动态(当前 1 个), 直连。"""
+    st, d = jreq(MTM + "/domains?page=1")
+    doms = [x.get("domain") for x in ((d or {}).get("hydra:member") or []) if x.get("isActive")]
+    if not doms:
+        print("[box] mail.tm 无可用域名:", str(d)[:80]); return None
+    addr = "".join(random.choices(string.ascii_lowercase + string.digits, k=12)) + "@" + doms[0]
+    pwd = "Rb" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!7"
+    st, r = jreq(MTM + "/accounts", "POST", {"address": addr, "password": pwd})
+    if st not in (200, 201):
+        print("[box] mail.tm 建号失败", st, str(r)[:80]); return None
+    st, r = jreq(MTM + "/token", "POST", {"address": addr, "password": pwd})
+    jwt = (r or {}).get("token") or ""
+    if not jwt:
+        print("[box] mail.tm 取token失败", str(r)[:80]); return None
+    print("[box]", addr)
+    return {"address": addr, "token": jwt, "mtm": True}
+
+def mtm_wait_otp(jwt, minutes=6):
+    ah = {"Authorization": "Bearer " + jwt}
+    deadline = time.time() + minutes * 60
+    seen = set()
+    while time.time() < deadline:
+        time.sleep(8)
+        st, d = jreq(MTM + "/messages?page=1", hdrs=ah)
+        for m in ((d or {}).get("hydra:member") or []):
+            if m.get("id") in seen: continue
+            seen.add(m.get("id"))
+            st2, full = jreq(MTM + "/messages/" + str(m.get("id")), hdrs=ah)
+            txt = " ".join([str(full.get("subject") or ""), str(full.get("intro") or ""),
+                            str(full.get("text") or ""), " ".join(full.get("html") or [])])
+            mm = re.search(r"\b(\d{6})\b", txt)
             if mm: return mm.group(1)
     return None
 
@@ -179,15 +218,16 @@ def get_turnstile_token():
     return tok
 
 def register_one():
-    box = tm_generate()
-    if not box:
-        print("[reg] tempmail 不可用"); return None
-    r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    pwd = "Rb" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!7"
+    # 09-11: 先过盾再生成邮箱(tempmail 时代是先拿邮箱, 白耗配额)
     ts_token = get_turnstile_token()
     if not ts_token:
-        print("[reg] 无 turnstile token, 跳过本次注册(省 tempmail 配额)")
+        print("[reg] 无 turnstile token, 跳过本次注册(省邮箱配额)")
         return None
+    box = mtm_generate() or tm_generate()
+    if not box:
+        print("[reg] 邮箱源不可用"); return None
+    r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    pwd = "Rb" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!7"
     px = PX()
     st, resp = px(BASE + "/api/auth/register", "POST",
                   {"email": box["address"], "password": pwd, "name": "nb_" + r8,
@@ -195,7 +235,7 @@ def register_one():
     if st != 201:
         print("[reg] 失败:", st, str(resp)[:150]); return None
     print("[reg] 已提交, 等OTP…")
-    otp = wait_otp(box["token"])
+    otp = mtm_wait_otp(box["token"]) if box.get("mtm") else wait_otp(box["token"])
     if not otp:
         print("[reg] OTP 超时"); return None
     fp = "".join(random.choices("0123456789abcdef", k=64))
@@ -228,8 +268,6 @@ if __name__ == "__main__":
             print("[px] 换代理 ->", PROXY)
             try:
                 tok = ts_solve.solve()   # solve() 每次读 TS_PROXY, 无需 reload
-            except Exception as e:
-                print("[ts] solver 异常:", str(e)[:150]); tok = ""
             except Exception as e:
                 print("[ts] solver 异常:", str(e)[:150]); tok = ""
             print("[ts] token_len", len(tok))
