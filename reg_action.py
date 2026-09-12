@@ -17,7 +17,7 @@ MTM = "https://api.mail.tm"
 RB_URL = os.environ.get("RB_MAIL_URL", "").rstrip("/")
 RB_SITE = os.environ.get("RB_MAIL_SITE", "")
 RB_ADMIN = os.environ.get("RB_MAIL_ADMIN", "")
-RB_DOMAIN = "xinyu1.ggff.net"
+RB_DOMAINS = ["xinyu1.ggff.net", "xinapi.bond", "xinfr.cyou"]  # 09-12 扩域名轮换
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
@@ -140,7 +140,7 @@ def rb_generate():
         print("[box] rb-mail secrets 未配置, 跳过"); return None
     name = "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
     st, d = jreq(RB_URL + "/admin/new_address", "POST",
-                 {"name": name, "domain": RB_DOMAIN, "enablePrefix": False},
+                 {"name": name, "domain": random.choice(RB_DOMAINS), "enablePrefix": False},
                  {"x-admin-auth": RB_ADMIN, "x-custom-auth": RB_SITE})
     if not (d or {}).get("jwt"):
         print("[box] rb-mail 建址失败", st, str(d)[:80]); return None
