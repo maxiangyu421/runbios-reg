@@ -305,9 +305,24 @@ def register_one():
     if st == 200:
         try: bal = float(w.get("balance_dollars") or w.get("available_balance_dollars") or 0)
         except Exception: pass
-    return {"email": box["address"], "password": pwd, "access_token": acc,
-            "refresh_token": tok.get("refresh_token"), "fp": fp, "workspace_id": wid,
-            "balance": bal, "registered_at": int(time.time()), "active": True, "error": ""}
+    # 09-25: 顺手建官方 serverless key(永不过期, 网关单头通道用; 失败不影响入池)
+    key = kid = ""
+    hk = dict(ah)
+    if wid: hk["X-Workspace-ID"] = wid
+    st, kr = px(BASE + "/api/api-keys", "POST", {"name": "rb-gw", "scopes": ["serverless"]}, hk)
+    if st in (200, 201) and isinstance(kr, dict):
+        key = kr.get("api_key") or kr.get("key") or ""
+        kid = str(kr.get("id") or "")
+        print("[apikey] ✅", (key or "")[:14], "…")
+    else:
+        print("[apikey] 建 key 失败", st, str(kr)[:120])
+    out = {"email": box["address"], "password": pwd, "access_token": acc,
+           "refresh_token": tok.get("refresh_token"), "fp": fp, "workspace_id": wid,
+           "balance": bal, "registered_at": int(time.time()), "active": True, "error": ""}
+    if key:
+        out.update(api_key=key, key_id=kid, key_prefix=key[:14],
+                   last_ok_at=0, cooldown_until=0)
+    return out
 
 if __name__ == "__main__":
     print("[px] 代理池:", len(PX_LIST), "个")
