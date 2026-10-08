@@ -18,6 +18,14 @@ RB_URL = os.environ.get("RB_MAIL_URL", "").rstrip("/")
 RB_SITE = os.environ.get("RB_MAIL_SITE", "")
 RB_ADMIN = os.environ.get("RB_MAIL_ADMIN", "")
 RB_DOMAINS = ["xinyu1.ggff.net", "xinapi.bond", "xinfr.cyou"]  # 09-12 扩域名轮换
+# 2026-10-08: 平台 400 DISPOSABLE_EMAIL 实锤拉黑 xinfr.cyou + xinyu1.ggff.net(见 run 37796942957/37798725299),
+# 仅 xinapi.bond 尚可用 -> 静态禁用前两个; 再加本轮运行时 _RB_BAD(self-heal), 被拒域名本轮不再复用。
+RB_DISABLED = {"xinfr.cyou", "xinyu1.ggff.net"}
+_RB_BAD = set()
+
+def _pick_domain():
+    ok = [d for d in RB_DOMAINS if d not in RB_DISABLED and d not in _RB_BAD]
+    return random.choice(ok or RB_DOMAINS)
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
@@ -140,7 +148,7 @@ def rb_generate():
         print("[box] rb-mail secrets 未配置, 跳过"); return None
     name = "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
     st, d = jreq(RB_URL + "/admin/new_address", "POST",
-                 {"name": name, "domain": random.choice(RB_DOMAINS), "enablePrefix": False},
+                 {"name": name, "domain": _pick_domain(), "enablePrefix": False},
                  {"x-admin-auth": RB_ADMIN, "x-custom-auth": RB_SITE})
     if not (d or {}).get("jwt"):
         print("[box] rb-mail 建址失败", st, str(d)[:80]); return None
@@ -283,6 +291,15 @@ def register_one():
                   {"email": box["address"], "password": pwd, "name": "nb_" + r8,
                    "website": "", "turnstile_token": ts_token})
     if st != 201:
+        # 2026-10-08: 域名被拉黑(400 DISPOSABLE_EMAIL) -> 记入本轮 _RB_BAD, 重试不再撞同一域名
+        try:
+            code = (resp.get("error") or {}).get("code") if isinstance(resp, dict) else ""
+        except Exception:
+            code = ""
+        if code == "DISPOSABLE_EMAIL" and "@" in box.get("address", ""):
+            bad = box["address"].rsplit("@", 1)[-1]
+            _RB_BAD.add(bad)
+            print("[reg] 域名", bad, "已拉黑, 本轮不再复用")
         print("[reg] 失败:", st, str(resp)[:150]); return None
     print("[reg] 已提交, 等OTP…")
     otp = (rb_wait_otp(box["jwt"]) if box.get("rb")
