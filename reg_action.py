@@ -8,6 +8,9 @@ tempmail.lol / mail.tm 与 api.github.com 一律直连 —— GIST_TOKEN 等真�
 邮箱源改为 mail.tm 优先 + tempmail.lol 兜底; 邮箱生成挪到过盾之后(省配额)。"""
 import json, os, re, sys, time, random, string, base64, socket, struct, ssl
 import urllib.request as U
+import urllib.parse
+
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 BASE = "https://platform.runbios.ai"
 TM = "https://api.tempmail.lol"
@@ -26,6 +29,7 @@ _RB_BAD = set()
 def _pick_domain():
     ok = [d for d in RB_DOMAINS if d not in RB_DISABLED and d not in _RB_BAD]
     return random.choice(ok or RB_DOMAINS)
+
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
 GIST_FILE = "accounts.json"
@@ -68,6 +72,70 @@ def jreq(url, method="GET", data=None, hdrs=None, timeout=30):
     except Exception as e:
         try: return getattr(e, "code", -1) or -1, json.loads(e.read().decode())
         except Exception: return -1, {"error": str(e)}
+
+# ---------------- boomlify(afy 项目同款邮箱源, 2026-11-01 接入) ----------------
+# 与 afy 风月项目共用同一个 CF Worker。edu 邮箱 48h TTL; /gmail 别名是 @gmail.com(白名单域名)但 24h。
+# 注意真实字段名: received_at / body_html / body_text（写成 receivedAt / html 会导致 fresh 恒空超时）
+BM = "https://boomlify-tempmail-api.whm36341275.workers.dev"
+BM_DOMAINS_BAD = set()
+
+def bm_generate(mode=None):
+    """mode='edu'(默认,48h) 或 'dot'(@gmail.com 点标别名,24h)。返回 box dict 或 None。"""
+    mode = mode or os.environ.get("RB_BM_MODE", "edu")
+    for i in range(4):
+        try:
+            if mode == "edu":
+                st, r = jreq(BM + "/mailboxes", "POST", {"type": "edu"},
+                             {"User-Agent": UA, "Content-Type": "application/json"})
+                d = (r or {}).get("data") or {}
+                em = d.get("address") or ""
+                ib = em                      # edu: inbox_id 就是地址本身
+                kind = "mailbox"
+            else:
+                st, r = jreq(BM + "/gmail", "POST", {"mode": "dot"},
+                             {"User-Agent": UA, "Content-Type": "application/json"})
+                d = (r or {}).get("data") or {}
+                em = d.get("email") or ""
+                ib = d.get("inboxId") or ""
+                kind = "gmail"
+            if em and "@" in em and ib:
+                dom = em.rsplit("@", 1)[-1]
+                if dom in BM_DOMAINS_BAD:
+                    print("[box] boomlify 域名", dom, "本轮已弃用, 重铸"); continue
+                print("[box]", em, "(boomlify-%s)" % mode)
+                return {"address": em, "bm": True, "bm_kind": kind, "bm_inbox": ib}
+        except Exception as e:
+            print("[box] boomlify 异常:", str(e)[:100])
+        time.sleep(2)
+    return None
+
+def bm_wait_otp(box, minutes=6):
+    """轮询 boomlify 收 6 位码。edu 走 /mailboxes/{addr}, dot 走 /gmail/{inboxId}/messages。"""
+    kind, ib = box.get("bm_kind", "mailbox"), box.get("bm_inbox", "")
+    url = (BM + "/gmail/%s/messages?limit=10" % urllib.parse.quote(ib, safe="")) if kind == "gmail" \
+        else (BM + "/mailboxes/%s?limit=10" % urllib.parse.quote(ib, safe=""))
+    seen, n = set(), 0
+    deadline = time.time() + minutes * 60
+    while time.time() < deadline:
+        time.sleep(8)
+        try:
+            st, r = jreq(url, hdrs={"User-Agent": UA})
+            d = (r or {}).get("data")
+            msgs = (d.get("messages") if isinstance(d, dict) else d) or []
+        except Exception:
+            continue
+        for m in msgs:
+            mid = m.get("id") or m.get("received_at") or ""
+            if mid in seen: continue
+            seen.add(mid)
+            body = (m.get("body_html") or m.get("html") or
+                    m.get("body_text") or m.get("text") or "")
+            txt = re.sub(r"<[^>]+>", " ", body)
+            mm = re.search(r"验证码[^0-9]{0,30}(\d{6})", txt) or re.search(r"\b(\d{6})\b", txt)
+            if mm: return mm.group(1)
+        n += 1
+        if n % 4 == 0: print("[box] 等 OTP", int(deadline - time.time()), "s…")
+    return None
 
 # ---------------- SOCKS5 隧道(仅 platform.runbios.ai 用) ----------------
 def socks5_connect(dst_host, dst_port, timeout=15):
@@ -281,7 +349,8 @@ def register_one():
     if not ts_token:
         print("[reg] 无 turnstile token, 跳过本次注册(省邮箱配额)")
         return None
-    box = rb_generate() or mtm_generate() or tm_generate()
+    # 2026-11-01: boomlify 优先（与 afy 同源, 48h TTL, 平台未拉黑 edu 域名前最稳）
+    box = bm_generate() or rb_generate() or mtm_generate() or tm_generate()
     if not box:
         print("[reg] 邮箱源不可用"); return None
     r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
@@ -299,10 +368,12 @@ def register_one():
         if code == "DISPOSABLE_EMAIL" and "@" in box.get("address", ""):
             bad = box["address"].rsplit("@", 1)[-1]
             _RB_BAD.add(bad)
+            if box.get("bm"): BM_DOMAINS_BAD.add(bad)
             print("[reg] 域名", bad, "已拉黑, 本轮不再复用")
         print("[reg] 失败:", st, str(resp)[:150]); return None
     print("[reg] 已提交, 等OTP…")
-    otp = (rb_wait_otp(box["jwt"]) if box.get("rb")
+    otp = (bm_wait_otp(box) if box.get("bm")
+           else rb_wait_otp(box["jwt"]) if box.get("rb")
            else mtm_wait_otp(box["token"]) if box.get("mtm") else wait_otp(box["token"]))
     if not otp:
         print("[reg] OTP 超时"); return None
