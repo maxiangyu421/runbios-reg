@@ -15,20 +15,10 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 BASE = "https://platform.runbios.ai"
 TM = "https://api.tempmail.lol"
 MTM = "https://api.mail.tm"
-# 2026-09-11: rb-mail = 自建 CF worker 邮箱(xinyu1.ggff.net 邮件路由 -> worker D1),
-# 域名不在临时邮箱黑名单。凭证走 repo secrets(公开仓库, 不能硬编码)。mail.tm/tempmail.lol 降为兜底。
-RB_URL = os.environ.get("RB_MAIL_URL", "").rstrip("/")
-RB_SITE = os.environ.get("RB_MAIL_SITE", "")
-RB_ADMIN = os.environ.get("RB_MAIL_ADMIN", "")
-RB_DOMAINS = ["xinyu1.ggff.net", "xinapi.bond", "xinfr.cyou"]  # 09-12 扩域名轮换
-# 2026-10-08: 平台 400 DISPOSABLE_EMAIL 实锤拉黑 xinfr.cyou + xinyu1.ggff.net(见 run 37796942957/37798725299),
-# 仅 xinapi.bond 尚可用 -> 静态禁用前两个; 再加本轮运行时 _RB_BAD(self-heal), 被拒域名本轮不再复用。
-RB_DISABLED = {"xinfr.cyou", "xinyu1.ggff.net"}
+# 2026-11-01: 全面弃用自建 rb-mail(xinyu1.ggff.net/xinapi.bond/xinfr.cyou 三域名已废或被拉黑,
+# 且实测礼金只有 $0.29)。注册链邮箱源统一走 boomlify API 邮箱 —— 实测稳定拿足额 $1 礼金。
+# 保留 _RB_BAD 供旧字段兼容, boomlify 走 BM_DOMAINS_BAD 自愈。
 _RB_BAD = set()
-
-def _pick_domain():
-    ok = [d for d in RB_DOMAINS if d not in RB_DISABLED and d not in _RB_BAD]
-    return random.choice(ok or RB_DOMAINS)
 
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 GIST_ID = os.environ["GIST_ID"]
@@ -209,51 +199,7 @@ def wait_otp(token, minutes=6):
             if mm: return mm.group(1)
     return None
 
-# ---------------- rb-mail(自建 CF 邮箱, 直连; 2026-09-11 主力) ----------------
-def rb_generate():
-    """worker admin API 建地址, 返回 jwt; 失败/未配置返回 None 走兜底。"""
-    if not (RB_URL and RB_SITE and RB_ADMIN):
-        print("[box] rb-mail secrets 未配置, 跳过"); return None
-    name = "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
-    st, d = jreq(RB_URL + "/admin/new_address", "POST",
-                 {"name": name, "domain": _pick_domain(), "enablePrefix": False},
-                 {"x-admin-auth": RB_ADMIN, "x-custom-auth": RB_SITE})
-    if not (d or {}).get("jwt"):
-        print("[box] rb-mail 建址失败", st, str(d)[:80]); return None
-    print("[box]", d["address"], "(rb-mail)")
-    return {"address": d["address"], "jwt": d["jwt"], "rb": True}
-
-def _mail_text(raw):
-    """RFC822 -> Subject + 正文文本(raw_mails 只有 raw 全文, 头部数字多, 必须解析后再找码)。"""
-    try:
-        from email import policy
-        import email as _em
-        msg = _em.message_from_string(raw, policy=policy.default)
-        parts = [str(msg.get("Subject") or "")]
-        body = msg.get_body(preferencelist=("plain", "html"))
-        if body is not None:
-            parts.append(body.get_content())
-        return " ".join(parts)
-    except Exception:
-        return raw
-
-def rb_wait_otp(jwt, minutes=6):
-    ah = {"Authorization": "Bearer " + jwt, "x-custom-auth": RB_SITE}
-    seen, n = set(), 0
-    deadline = time.time() + minutes * 60
-    while time.time() < deadline:
-        time.sleep(8)
-        st, d = jreq(RB_URL + "/api/mails?limit=20&offset=0", hdrs=ah)
-        for m in ((d or {}).get("results") or []):
-            if m.get("id") in seen: continue
-            seen.add(m.get("id"))
-            mm = re.search(r"\b(\d{6})\b", _mail_text(m.get("raw") or ""))
-            if mm: return mm.group(1)
-        n += 1
-        if n % 4 == 0: print("[box] 等 OTP", int(deadline - time.time()), "s…")
-    return None
-
-# ---------------- mail.tm(直连, 不走代理; 2026-09-11 降为兜底) ----------------
+# ---------------- mail.tm(直连, 不走代理; 2026-11-01 起降为最后兜底) ----------------
 def mtm_generate():
     """mail.tm: 建账号收信。域名池动态(当前 1 个), 直连。"""
     st, d = jreq(MTM + "/domains?page=1")
@@ -349,8 +295,9 @@ def register_one():
     if not ts_token:
         print("[reg] 无 turnstile token, 跳过本次注册(省邮箱配额)")
         return None
-    # 2026-11-01: boomlify 优先（与 afy 同源, 48h TTL, 平台未拉黑 edu 域名前最稳）
-    box = bm_generate() or rb_generate() or mtm_generate() or tm_generate()
+    # 2026-11-01: 统一走 boomlify API 邮箱（实测稳定 $1 足额礼金）。
+    # mail.tm / tempmail.lol 仅作极端兜底（平台已拉黑其域名，正常走不到）。
+    box = bm_generate() or mtm_generate() or tm_generate()
     if not box:
         print("[reg] 邮箱源不可用"); return None
     r8 = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
@@ -373,7 +320,6 @@ def register_one():
         print("[reg] 失败:", st, str(resp)[:150]); return None
     print("[reg] 已提交, 等OTP…")
     otp = (bm_wait_otp(box) if box.get("bm")
-           else rb_wait_otp(box["jwt"]) if box.get("rb")
            else mtm_wait_otp(box["token"]) if box.get("mtm") else wait_otp(box["token"]))
     if not otp:
         print("[reg] OTP 超时"); return None
